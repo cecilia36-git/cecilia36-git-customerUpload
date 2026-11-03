@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>客戶訂單管理</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; font-family: system-ui, "Noto Sans TC", sans-serif; background: #f4f6f8; color: #333; }
+    .box { max-width: 900px; margin: 0 auto; background: #fff; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+    .box + .box { margin-top: 16px; }
+    h1 { margin: 0 0 16px; font-size: 20px; }
+    h2 { margin: 0 0 12px; font-size: 16px; }
+    label { display: block; margin: 12px 0 6px; font-size: 14px; color: #555; }
+    input[type=text], input[type=email], input[type=password] { width: 100%; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; }
+    button { padding: 10px 16px; font-size: 15px; color: #fff; background: #1565c0; border: 0; border-radius: 8px; cursor: pointer; }
+    button:disabled { background: #bbb; cursor: not-allowed; }
+    button.light { background: #eceff1; color: #333; }
+    button.small { padding: 6px 10px; font-size: 13px; }
+    .login { max-width: 380px; }
+    .login button { width: 100%; margin-top: 18px; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+    .topbar .who { font-size: 14px; color: #666; word-break: break-all; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+    .row > div { flex: 1; min-width: 160px; }
+    .row > button { flex: none; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14px; }
+    th, td { padding: 10px 8px; border-bottom: 1px solid #eee; text-align: left; }
+    th { background: #fafafa; color: #666; font-weight: 600; }
+    td input { padding: 6px 8px; font-size: 14px; }
+    td.actions { white-space: nowrap; text-align: right; }
+    td.actions button + button { margin-left: 6px; }
+    .table-wrap { overflow-x: auto; }
+    #msg { margin-top: 12px; font-size: 14px; min-height: 20px; }
+    #msg.ok { color: #2e7d32; }
+    #msg.err { color: #c62828; }
+    .empty { text-align: center; color: #999; padding: 24px 0; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+
+  <!-- 登入區 -->
+  <div id="loginView" class="box login" hidden>
+    <h1>登入</h1>
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="username">
+    <label for="password">密碼</label>
+    <input id="password" type="password" autocomplete="current-password">
+    <button id="loginBtn">登入</button>
+    <div id="loginMsg" class="err"></div>
+  </div>
+
+  <!-- 主畫面 -->
+  <div id="appView" hidden>
+    <div class="box">
+      <div class="topbar">
+        <h1 style="margin:0">客戶訂單管理</h1>
+        <div>
+          <span class="who" id="who"></span>
+          <button id="logoutBtn" class="light small">登出</button>
+        </div>
+      </div>
+
+      <h2>新增訂單</h2>
+      <div class="row">
+        <div>
+          <label for="newCode">客戶代碼</label>
+          <input id="newCode" type="text" maxlength="50" autocomplete="off">
+        </div>
+        <div>
+          <label for="newOrder">訂單號碼</label>
+          <input id="newOrder" type="text" maxlength="50" autocomplete="off">
+        </div>
+        <button id="addBtn">新增</button>
+      </div>
+      <div id="msg"></div>
+    </div>
+
+    <div class="box">
+      <h2>訂單查詢</h2>
+      <div class="row">
+        <div>
+          <label for="searchCode">依客戶代碼查詢（留空顯示全部）</label>
+          <input id="searchCode" type="text" autocomplete="off">
+        </div>
+        <button id="searchBtn">查詢</button>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>客戶代碼</th><th>訂單號碼</th><th>更新日期時間</th><th></th></tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+    // ===== 設定區 =====
+    const SUPABASE_URL = 'https://zsshwwkcponllfciabwi.supabase.co'
+    const SUPABASE_ANON_KEY = 'sb_publishable_yUgI5aXrObJUsegDLl8EnQ_QJK66Wc5'
+    const TABLE = 'customer_orders'
+    const PAGE_LIMIT = 200          // 單次最多顯示筆數
+    // ==================
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    const $ = id => document.getElementById(id)
+
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+
+    const fmt = iso => new Date(iso).toLocaleString('zh-TW', { hour12: false })
+
+    function show(text, type = '') {
+      $('msg').textContent = text
+      $('msg').className = type
+    }
+
+    function errText(e) {
+      if (e?.code === '23505') return '此客戶已有相同的訂單號碼'
+      return e?.message || '發生未知錯誤'
+    }
+
+    // ===== 登入狀態切換 =====
+    function setView(session) {
+      const loggedIn = !!session
+      $('loginView').hidden = loggedIn
+      $('appView').hidden = !loggedIn
+      if (loggedIn) {
+        $('who').textContent = session.user.email
+        loadOrders()
+      } else {
+        $('tbody').innerHTML = ''
+      }
+    }
+
+    supabase.auth.onAuthStateChange((_event, session) => setView(session))
+
+    $('loginBtn').addEventListener('click', login)
+    $('password').addEventListener('keydown', e => { if (e.key === 'Enter') login() })
+
+    async function login() {
+      const email = $('email').value.trim()
+      const password = $('password').value
+      if (!email || !password) { $('loginMsg').textContent = '請輸入 Email 與密碼'; return }
+
+      $('loginBtn').disabled = true
+      $('loginMsg').textContent = ''
+      const { error } = await supabase.auth.signInWithPassword({ email, password })
+      $('loginBtn').disabled = false
+      if (error) $('loginMsg').textContent = '登入失敗：' + error.message
+      else $('password').value = ''
+    }
+
+    $('logoutBtn').addEventListener('click', () => supabase.auth.signOut())
+
+    // ===== 查詢 =====
+    async function loadOrders() {
+      const code = $('searchCode').value.trim()
+      let q = supabase
+        .from(TABLE)
+        .select('id, customer_code, order_no, updated_at')
+        .order('updated_at', { ascending: false })
+        .limit(PAGE_LIMIT)
+      if (code) q = q.eq('customer_code', code)
+
+      const { data, error } = await q
+      if (error) {
+        $('tbody').innerHTML = `<tr><td colspan="4" class="empty">載入失敗：${esc(error.message)}</td></tr>`
+        return
+      }
+      renderRows(data)
+    }
+
+    function renderRows(list) {
+      if (!list.length) {
+        $('tbody').innerHTML = '<tr><td colspan="4" class="empty">沒有資料</td></tr>'
+        return
+      }
+      $('tbody').innerHTML = list.map(r => rowHtml(r)).join('')
+    }
+
+    function rowHtml(r) {
+      return `
+        <tr data-id="${esc(r.id)}" data-order="${esc(r.order_no)}">
+          <td>${esc(r.customer_code)}</td>
+          <td class="order-cell">${esc(r.order_no)}</td>
+          <td>${esc(fmt(r.updated_at))}</td>
+          <td class="actions"><button class="small light" data-act="edit">修改</button></td>
+        </tr>`
+    }
+
+    $('searchBtn').addEventListener('click', loadOrders)
+    $('searchCode').addEventListener('keydown', e => { if (e.key === 'Enter') loadOrders() })
+
+    // ===== 新增 =====
+    $('addBtn').addEventListener('click', async () => {
+      const customer_code = $('newCode').value.trim()
+      const order_no = $('newOrder').value.trim()
+      if (!customer_code || !order_no) return show('請輸入客戶代碼與訂單號碼', 'err')
+
+      $('addBtn').disabled = true
+      show('新增中…')
+      // updated_at 由資料庫自動填入
+      const { error } = await supabase.from(TABLE).insert({ customer_code, order_no })
+      $('addBtn').disabled = false
+
+      if (error) return show('新增失敗：' + errText(error), 'err')
+      show('新增成功', 'ok')
+      $('newOrder').value = ''
+      loadOrders()
+    })
+
+    // ===== 修改（訂單號碼）=====
+    $('tbody').addEventListener('click', async e => {
+      const btn = e.target.closest('button[data-act]')
+      if (!btn) return
+      const tr = btn.closest('tr')
+      const id = tr.dataset.id
+      const act = btn.dataset.act
+
+      if (act === 'edit') {
+        const cell = tr.querySelector('.order-cell')
+        cell.innerHTML = `<input type="text" maxlength="50" value="${esc(tr.dataset.order)}">`
+        tr.querySelector('.actions').innerHTML =
+          '<button class="small" data-act="save">儲存</button><button class="small light" data-act="cancel">取消</button>'
+        cell.querySelector('input').focus()
+      }
+
+      if (act === 'cancel') {
+        tr.querySelector('.order-cell').textContent = tr.dataset.order
+        tr.querySelector('.actions').innerHTML = '<button class="small light" data-act="edit">修改</button>'
+      }
+
+      if (act === 'save') {
+        const newNo = tr.querySelector('.order-cell input').value.trim()
+        if (!newNo) return show('訂單號碼不可空白', 'err')
+        if (newNo === tr.dataset.order) return btn.nextElementSibling.click()
+
+        btn.disabled = true
+        // updated_at 由資料庫 trigger 自動更新
+        const { data, error } = await supabase
+          .from(TABLE)
+          .update({ order_no: newNo })
+          .eq('id', id)
+          .select('id, customer_code, order_no, updated_at')
+
+        if (error) { btn.disabled = false; return show('修改失敗：' + errText(error), 'err') }
+        if (!data?.length) { btn.disabled = false; return show('修改失敗：沒有權限或資料不存在', 'err') }
+
+        show('修改成功', 'ok')
+        tr.outerHTML = rowHtml(data[0])
+      }
+    })
+
+    // 初始：檢查是否已登入
+    supabase.auth.getSession().then(({ data }) => setView(data.session))
+  </script>
+</body>
+</html>
