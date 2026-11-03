@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>客戶圖片上傳（訂單驗證）</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; font-family: system-ui, "Noto Sans TC", sans-serif; background: #faf7f5; color: #333; }
+    .box { max-width: 420px; margin: 0 auto; background: #fff; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+    h1 { margin: 0 0 20px; font-size: 20px; text-align: center; }
+    label { display: block; margin: 14px 0 6px; font-size: 14px; color: #555; }
+    input[type=text], input[type=file] { width: 100%; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; background: #fff; }
+    #preview { display: none; max-width: 100%; max-height: 240px; margin: 14px auto 0; border-radius: 8px; }
+    button { width: 100%; margin-top: 20px; padding: 12px; font-size: 16px; color: #fff; background: #c2185b; border: 0; border-radius: 8px; cursor: pointer; }
+    button:disabled { background: #bbb; cursor: not-allowed; }
+    #msg { margin-top: 14px; text-align: center; font-size: 14px; min-height: 20px; }
+    #msg.ok { color: #2e7d32; }
+    #msg.err { color: #c62828; }
+    .captcha-row { display: flex; gap: 10px; align-items: center; }
+    .captcha-row input { flex: 1; min-width: 0; }
+    #captchaCanvas { border: 1px solid #ccc; border-radius: 8px; cursor: pointer; background: #f5f5f5; }
+    .hint { font-size: 12px; color: #999; margin-top: 4px; }
+    a { display: block; text-align: center; margin-top: 16px; font-size: 14px; color: #666; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>客戶圖片上傳</h1>
+
+    <label for="customerCode">客戶代碼</label>
+    <input id="customerCode" type="text" maxlength="50" placeholder="請輸入客戶代碼" autocomplete="off">
+
+    <label for="orderNo">訂單號碼</label>
+    <input id="orderNo" type="text" maxlength="50" placeholder="請輸入訂單號碼" autocomplete="off">
+
+    <label for="file">圖片</label>
+    <input id="file" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+    <div class="hint">格式：JPG / PNG / WebP / GIF，單張上限 5 MB</div>
+    <img id="preview" alt="預覽">
+
+    <label for="captchaInput">驗證碼（點圖片可更換）</label>
+    <div class="captcha-row">
+      <canvas id="captchaCanvas" width="140" height="44" title="點擊更換"></canvas>
+      <input id="captchaInput" type="text" maxlength="5" placeholder="輸入驗證碼" autocomplete="off">
+    </div>
+
+    <button id="uploadBtn">上傳</button>
+    <div id="msg"></div>
+    <a href="show.html">查看已上傳的圖片</a>
+  </div>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+    // ===== 設定區 =====
+    const SUPABASE_URL = 'https://zsshwwkcponllfciabwi.supabase.co'
+    const SUPABASE_ANON_KEY = 'sb_publishable_yUgI5aXrObJUsegDLl8EnQ_QJK66Wc5'
+    const BUCKET = 'Work'
+    const TABLE = 'customer_uploads'
+    const FOLDER = 'UserPicture'          // 圖片存放的資料夾
+    const MAX_SIZE_MB = 5                 // 單張圖片大小上限
+    // ==================
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+
+    const codeEl = document.getElementById('customerCode')
+    const orderEl = document.getElementById('orderNo')
+    const fileEl = document.getElementById('file')
+    const btn = document.getElementById('uploadBtn')
+    const msg = document.getElementById('msg')
+    const preview = document.getElementById('preview')
+
+    function show(text, type = '') {
+      msg.textContent = text
+      msg.className = type
+    }
+
+    // ===== 驗證碼（畫在 canvas 上）=====
+    const capCanvas = document.getElementById('captchaCanvas')
+    const capInput = document.getElementById('captchaInput')
+    let captchaText = ''
+
+    function randInt(n) {
+      return crypto.getRandomValues(new Uint32Array(1))[0] % n
+    }
+
+    function newCaptcha() {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'   // 排除容易混淆的 I O 0 1
+      captchaText = Array.from({ length: 5 }, () => chars[randInt(chars.length)]).join('')
+
+      const ctx = capCanvas.getContext('2d')
+      const w = capCanvas.width, h = capCanvas.height
+      ctx.fillStyle = '#f5f5f5'
+      ctx.fillRect(0, 0, w, h)
+
+      // 干擾線
+      for (let i = 0; i < 5; i++) {
+        ctx.strokeStyle = `hsl(${randInt(360)}, 40%, 65%)`
+        ctx.beginPath()
+        ctx.moveTo(randInt(w), randInt(h))
+        ctx.lineTo(randInt(w), randInt(h))
+        ctx.stroke()
+      }
+      // 文字（每個字隨機旋轉與位移）
+      ctx.font = 'bold 26px monospace'
+      ctx.textBaseline = 'middle'
+      for (let i = 0; i < captchaText.length; i++) {
+        ctx.save()
+        ctx.translate(16 + i * 25, h / 2 + (randInt(10) - 5))
+        ctx.rotate((randInt(40) - 20) * Math.PI / 180)
+        ctx.fillStyle = `hsl(${randInt(360)}, 60%, 35%)`
+        ctx.fillText(captchaText[i], 0, 0)
+        ctx.restore()
+      }
+      // 干擾點
+      for (let i = 0; i < 40; i++) {
+        ctx.fillStyle = `hsl(${randInt(360)}, 40%, 50%)`
+        ctx.fillRect(randInt(w), randInt(h), 2, 2)
+      }
+      capInput.value = ''
+    }
+    capCanvas.addEventListener('click', newCaptcha)
+    newCaptcha()
+
+    // 選圖後檢查大小並顯示預覽
+    fileEl.addEventListener('change', () => {
+      const f = fileEl.files[0]
+      if (!f) { preview.style.display = 'none'; return }
+      if (f.size > MAX_SIZE_MB * 1024 * 1024) {
+        fileEl.value = ''
+        preview.style.display = 'none'
+        return show(`圖片不可超過 ${MAX_SIZE_MB} MB（目前 ${(f.size / 1024 / 1024).toFixed(1)} MB）`, 'err')
+      }
+      show('')
+      preview.src = URL.createObjectURL(f)
+      preview.style.display = 'block'
+    })
+
+    async function upload(file, customerCode) {
+      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
+      // 檔名用 UUID，避免中文或特殊字元造成路徑錯誤
+      const path = `${FOLDER}/${crypto.randomUUID()}.${ext}`
+
+      // 1) 上傳圖片到 Storage
+      const { error: upErr } = await supabase.storage
+        .from(BUCKET)
+        .upload(path, file, { contentType: file.type, upsert: false })
+      if (upErr) throw upErr
+
+      // 2) 寫入資料表（uploaded_at 由資料庫自動填入）
+      const { error: dbErr } = await supabase
+        .from(TABLE)
+        .insert({ customer_code: customerCode, file_path: path })
+
+      // 3) 寫入失敗就刪除剛上傳的圖片，避免孤兒檔案
+      if (dbErr) {
+        await supabase.storage.from(BUCKET).remove([path])
+        throw dbErr
+      }
+    }
+
+    btn.addEventListener('click', async () => {
+      const code = codeEl.value.trim()
+      const file = fileEl.files[0]
+
+      const order = orderEl.value.trim()
+
+      if (!code) return show('請輸入客戶代碼', 'err')
+      if (!order) return show('請輸入訂單號碼', 'err')
+      if (!file) return show('請選擇圖片', 'err')
+      if (!file.type.startsWith('image/')) return show('只能上傳圖片檔', 'err')
+      if (file.size > MAX_SIZE_MB * 1024 * 1024) return show(`圖片不可超過 ${MAX_SIZE_MB} MB`, 'err')
+
+      if (capInput.value.trim().toUpperCase() !== captchaText) {
+        newCaptcha()
+        return show('驗證碼錯誤，請重新輸入', 'err')
+      }
+
+      btn.disabled = true
+      show('上傳中…')
+      try {
+        // 驗證客戶代碼 + 訂單號碼是否存在於 customer_orders
+        show('驗證客戶訂單…')
+        const { data: ok, error: chkErr } = await supabase.rpc('check_order', {
+          p_customer_code: code,
+          p_order_no: order
+        })
+        if (chkErr) throw chkErr
+        if (!ok) {
+          show('客戶代碼與訂單號碼不符，無法上傳', 'err')
+          return
+        }
+
+        show('上傳中…')
+        await upload(file, code)
+        show('上傳成功', 'ok')
+        fileEl.value = ''
+        preview.style.display = 'none'
+      } catch (e) {
+        show('失敗：' + e.message, 'err')
+      } finally {
+        newCaptcha()
+        btn.disabled = false
+      }
+    })
+  </script>
+</body>
+</html>
