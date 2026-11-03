@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>圖片展示（需登入）</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; font-family: system-ui, "Noto Sans TC", sans-serif; background: #faf7f5; color: #333; }
+    h1 { text-align: center; margin: 0 0 16px; }
+    button { padding: 8px 14px; font-size: 14px; color: #fff; background: #1565c0; border: 0; border-radius: 8px; cursor: pointer; }
+    button:disabled { background: #bbb; cursor: not-allowed; }
+    button.light { background: #eceff1; color: #333; }
+
+    /* 登入 */
+    #loginView { max-width: 380px; margin: 60px auto; background: #fff; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+    #loginView h1 { font-size: 20px; margin-bottom: 8px; }
+    #loginView label { display: block; margin: 12px 0 6px; font-size: 14px; color: #555; }
+    #loginView input { width: 100%; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; }
+    #loginView button { width: 100%; margin-top: 18px; padding: 12px; font-size: 16px; }
+    #loginMsg { margin-top: 12px; font-size: 14px; color: #c62828; min-height: 18px; text-align: center; }
+
+    /* 展示 */
+    .topbar { max-width: 1100px; margin: 0 auto 8px; display: flex; justify-content: flex-end; align-items: center; gap: 8px; font-size: 13px; color: #666; }
+    .topbar span { word-break: break-all; }
+    #filter { display: block; margin: 0 auto 24px; padding: 8px 12px; font-size: 16px; }
+    #status { text-align: center; color: #888; }
+    #gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; max-width: 1100px; margin: 0 auto; }
+    .card { background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,.08); cursor: pointer; }
+    .card img { width: 100%; aspect-ratio: 1 / 1; object-fit: contain; display: block; background: #eee; }
+    .card .info { padding: 10px 12px; font-size: 14px; display: flex; justify-content: space-between; gap: 8px; }
+    .card .date { color: #999; white-space: nowrap; }
+    #more { display: block; margin: 20px auto 0; }
+    #lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none; align-items: center; justify-content: center; z-index: 10; }
+    #lightbox.show { display: flex; }
+    #lightbox img { max-width: 92vw; max-height: 92vh; border-radius: 8px; background: #fff; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+
+  <!-- 未登入：只顯示登入表單，不載入任何圖片或資料 -->
+  <div id="loginView" hidden>
+    <h1>請先登入</h1>
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="username">
+    <label for="password">密碼</label>
+    <input id="password" type="password" autocomplete="current-password">
+    <button id="loginBtn">登入</button>
+    <div id="loginMsg"></div>
+  </div>
+
+  <!-- 已登入且有權限：顯示圖片 -->
+  <div id="appView" hidden>
+    <h1>圖片展示</h1>
+    <div class="topbar">
+      <span id="who"></span>
+      <button id="logoutBtn" class="light">登出</button>
+    </div>
+    <select id="filter"><option value="">全部</option></select>
+    <p id="status">載入中…</p>
+    <div id="gallery"></div>
+    <button id="more" class="light" hidden>載入更多</button>
+  </div>
+
+  <!-- 已登入但沒有權限 -->
+  <div id="deniedView" hidden style="max-width:380px;margin:60px auto;text-align:center">
+    <h1 style="font-size:20px">沒有瀏覽權限</h1>
+    <p id="deniedWho" style="color:#666;font-size:14px"></p>
+    <button id="deniedLogout" class="light">登出</button>
+  </div>
+
+  <div id="lightbox"><img alt=""></div>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+    // ===== 設定區 =====
+    const SUPABASE_URL = 'https://zsshwwkcponllfciabwi.supabase.co'
+    const SUPABASE_ANON_KEY = 'sb_publishable_yUgI5aXrObJUsegDLl8EnQ_QJK66Wc5'
+    const BUCKET = 'Work'
+    const TABLE = 'customer_uploads'
+    const ADMIN_TABLE = 'admins'
+    const REQUIRE_ADMIN = false     // true：只有 admins 名單內的帳號能看；false：任何登入者都能看
+    const PAGE_SIZE = 60            // 每次顯示張數
+    const SIGN_SECONDS = 3600       // 圖片簽名網址有效秒數
+    // ==================
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    const $ = id => document.getElementById(id)
+
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+
+    let allWorks = []
+    let shown = PAGE_SIZE
+    const urlCache = new Map()      // 路徑 → 簽名網址
+    let currentUser = null          // 目前已處理過的使用者，避免重複載入
+    let renderToken = 0
+
+    // file_path 可能是相對路徑或完整公開網址，統一取出 bucket 內路徑
+    function pathOf(fp) {
+      if (/^https?:\/\//i.test(fp)) {
+        const marker = `/object/public/${BUCKET}/`
+        const i = fp.indexOf(marker)
+        return i >= 0 ? decodeURIComponent(fp.slice(i + marker.length).split('?')[0]) : fp
+      }
+      return fp
+    }
+
+    // 向 Storage 取得簽名網址（Bucket 設為公開或私人都適用）
+    async function signPaths(paths) {
+      const need = [...new Set(paths)].filter(p => !urlCache.has(p))
+      for (let i = 0; i < need.length; i += 100) {
+        const chunk = need.slice(i, i + 100)
+        const { data, error } = await supabase.storage.from(BUCKET).createSignedUrls(chunk, SIGN_SECONDS)
+        if (error) throw error
+        data.forEach(d => { if (d.signedUrl) urlCache.set(d.path, d.signedUrl) })
+      }
+    }
+
+    const visibleList = () => {
+      const code = $('filter').value
+      return code ? allWorks.filter(w => w.customer_code === code) : allWorks
+    }
+
+    async function render() {
+      const token = ++renderToken
+      const list = visibleList()
+      const slice = list.slice(0, shown)
+
+      if (!list.length) {
+        $('gallery').innerHTML = ''
+        $('status').textContent = '目前沒有資料'
+        $('more').hidden = true
+        return
+      }
+      $('status').textContent = '載入圖片中…'
+
+      try {
+        await signPaths(slice.map(w => pathOf(w.file_path)))
+      } catch (e) {
+        if (token === renderToken) $('status').textContent = '取得圖片網址失敗：' + e.message
+        return
+      }
+      if (token !== renderToken) return   // 已有較新的繪製，放棄這次
+
+      $('status').textContent = ''
+      $('gallery').innerHTML = slice.map(w => {
+        const url = urlCache.get(pathOf(w.file_path)) || ''
+        return `
+          <div class="card" data-url="${esc(url)}">
+            <img src="${esc(url)}" loading="lazy" alt="${esc(w.customer_code)}">
+            <div class="info">
+              <span>${esc(w.customer_code)}</span>
+              <span class="date">${new Date(w.uploaded_at).toLocaleDateString('zh-TW')}</span>
+            </div>
+          </div>`
+      }).join('')
+      $('more').hidden = shown >= list.length
+    }
+
+    async function load() {
+      $('status').textContent = '載入中…'
+      const { data, error } = await supabase
+        .from(TABLE)
+        .select('customer_code, file_path, uploaded_at')
+        .order('uploaded_at', { ascending: false })
+
+      if (error) { $('status').textContent = '載入失敗：' + error.message; return }
+      allWorks = data
+      shown = PAGE_SIZE
+
+      const codes = [...new Set(data.map(w => w.customer_code))]
+      $('filter').innerHTML = '<option value="">全部客戶代碼</option>' +
+        codes.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')
+
+      render()
+    }
+
+    $('filter').addEventListener('change', () => { shown = PAGE_SIZE; render() })
+    $('more').addEventListener('click', () => { shown += PAGE_SIZE; render() })
+
+    $('gallery').addEventListener('click', e => {
+      const card = e.target.closest('.card')
+      if (!card || !card.dataset.url) return
+      $('lightbox').querySelector('img').src = card.dataset.url
+      $('lightbox').classList.add('show')
+    })
+    $('lightbox').addEventListener('click', () => $('lightbox').classList.remove('show'))
+
+    // ===== 登入 / 權限 =====
+    function showOnly(view) {
+      $('loginView').hidden = view !== 'login'
+      $('appView').hidden = view !== 'app'
+      $('deniedView').hidden = view !== 'denied'
+    }
+
+    async function handleSession(session) {
+      if (!session) {
+        // 登出：清掉所有已載入的資料與網址
+        currentUser = null
+        allWorks = []
+        urlCache.clear()
+        $('gallery').innerHTML = ''
+        showOnly('login')
+        return
+      }
+      if (currentUser === session.user.id) return   // 同一人（例如 token 更新），不重複載入
+      currentUser = session.user.id
+
+      if (REQUIRE_ADMIN) {
+        const { data, error } = await supabase
+          .from(ADMIN_TABLE).select('user_id').eq('user_id', session.user.id).maybeSingle()
+        if (error || !data) {
+          $('deniedWho').textContent = session.user.email
+          showOnly('denied')
+          return
+        }
+      }
+      $('who').textContent = session.user.email
+      showOnly('app')
+      load()
+    }
+
+    supabase.auth.onAuthStateChange((_e, session) => { handleSession(session) })
+    supabase.auth.getSession().then(({ data }) => handleSession(data.session))
+
+    async function login() {
+      const email = $('email').value.trim()
+      const password = $('password').value
+      if (!email || !password) { $('loginMsg').textContent = '請輸入 Email 與密碼'; return }
+      $('loginBtn').disabled = true
+      $('loginMsg').textContent = ''
+      const { error } = await supabase.auth.signInWithPassword({ email, password })
+      $('loginBtn').disabled = false
+      if (error) $('loginMsg').textContent = '登入失敗：' + error.message
+      else $('password').value = ''
+    }
+    $('loginBtn').addEventListener('click', login)
+    $('password').addEventListener('keydown', e => { if (e.key === 'Enter') login() })
+    $('logoutBtn').addEventListener('click', () => supabase.auth.signOut())
+    $('deniedLogout').addEventListener('click', () => supabase.auth.signOut())
+  </script>
+</body>
+</html>
