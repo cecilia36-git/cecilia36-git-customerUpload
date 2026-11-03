@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>上傳紀錄管理（日期區間）</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; font-family: system-ui, "Noto Sans TC", sans-serif; background: #f4f6f8; color: #333; }
+    .box { max-width: 960px; margin: 0 auto; background: #fff; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+    .box + .box { margin-top: 16px; }
+    h1 { margin: 0; font-size: 20px; }
+    h2 { margin: 0 0 12px; font-size: 16px; }
+    label { display: block; margin: 12px 0 6px; font-size: 14px; color: #555; }
+    input[type=text], input[type=email], input[type=password] { width: 100%; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; }
+    button { padding: 10px 16px; font-size: 15px; color: #fff; background: #1565c0; border: 0; border-radius: 8px; cursor: pointer; }
+    button:disabled { background: #bbb; cursor: not-allowed; }
+    button.light { background: #eceff1; color: #333; }
+    button.danger { background: #c62828; }
+    button.small { padding: 6px 10px; font-size: 13px; }
+    .login { max-width: 380px; }
+    .login button { width: 100%; margin-top: 18px; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .who { font-size: 14px; color: #666; word-break: break-all; margin-right: 8px; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+    .row > div { flex: 1; min-width: 180px; }
+    .row > button { flex: none; }
+    .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 16px; padding: 10px 12px; background: #fafafa; border-radius: 8px; font-size: 14px; }
+    .toolbar label { display: inline-flex; align-items: center; gap: 6px; margin: 0; color: #333; cursor: pointer; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; }
+    th, td { padding: 8px; border-bottom: 1px solid #eee; text-align: left; vertical-align: middle; }
+    th { color: #666; font-weight: 600; white-space: nowrap; }
+    td.chk, th.chk { width: 36px; text-align: center; }
+    td.path { word-break: break-all; color: #888; font-size: 12px; max-width: 260px; }
+    td.date { white-space: nowrap; }
+    td.act { text-align: right; white-space: nowrap; }
+    tr.selected { background: #fff8e1; }
+    .thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; background: #eee; cursor: zoom-in; display: block; }
+    input[type=checkbox] { width: 18px; height: 18px; cursor: pointer; }
+    #msg { margin-top: 12px; font-size: 14px; min-height: 20px; }
+    #msg.ok { color: #2e7d32; }
+    #msg.err { color: #c62828; }
+    .empty { text-align: center; color: #999; padding: 24px 0; }
+    #more { display: block; margin: 16px auto 0; }
+    #lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none; align-items: center; justify-content: center; z-index: 10; }
+    #lightbox.show { display: flex; }
+    #lightbox img { max-width: 92vw; max-height: 92vh; border-radius: 8px; background: #fff; }
+    input[type=date] { width: 100%; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; }
+    .bulk { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 16px; padding: 12px; border: 1px solid #ffcdd2; background: #fff5f5; border-radius: 8px; font-size: 14px; }
+    .hint { font-size: 12px; color: #888; margin-top: 4px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+
+  <!-- 登入區 -->
+  <div id="loginView" class="box login" hidden>
+    <h1>管理者登入</h1>
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="username">
+    <label for="password">密碼</label>
+    <input id="password" type="password" autocomplete="current-password">
+    <button id="loginBtn">登入</button>
+    <div id="loginMsg" style="margin-top:12px;font-size:14px;color:#c62828"></div>
+  </div>
+
+  <!-- 管理畫面 -->
+  <div id="appView" hidden>
+    <div class="box">
+      <div class="topbar">
+        <h1>上傳紀錄管理</h1>
+        <div>
+          <span class="who" id="who"></span>
+          <button id="logoutBtn" class="light small">登出</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="box">
+      <h2>查詢</h2>
+      <div class="row">
+        <div>
+          <label for="searchCode">客戶代碼（可部分比對，留空顯示全部）</label>
+          <input id="searchCode" type="text" autocomplete="off">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="dateFrom">起始日期</label>
+          <input id="dateFrom" type="date">
+        </div>
+        <div>
+          <label for="dateTo">結束日期（含當天）</label>
+          <input id="dateTo" type="date">
+        </div>
+        <button id="searchBtn">查詢</button>
+        <button id="clearBtn" class="light">清除條件</button>
+      </div>
+
+      <div class="bulk" id="bulkBox">
+        <div>
+          <strong>依條件整批刪除</strong>
+          <div class="hint" id="filterLabel">目前條件：全部</div>
+        </div>
+        <button id="delAllBtn" class="danger" disabled>刪除符合條件的全部資料</button>
+      </div>
+
+      <div class="toolbar">
+        <label><input type="checkbox" id="checkAll"> 全選（目前列出的資料）</label>
+        <span id="count"></span>
+        <button id="delSelectedBtn" class="danger small" disabled>刪除勾選的項目</button>
+      </div>
+      <div id="msg"></div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="chk"></th><th>預覽</th><th>客戶代碼</th><th>上傳日期時間</th><th>檔案路徑</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <button id="more" class="light" hidden>載入更多</button>
+    </div>
+  </div>
+
+  <div id="lightbox"><img alt=""></div>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+    // ===== 設定區 =====
+    const SUPABASE_URL = 'https://zsshwwkcponllfciabwi.supabase.co'
+    const SUPABASE_ANON_KEY = 'sb_publishable_yUgI5aXrObJUsegDLl8EnQ_QJK66Wc5'
+    const BUCKET = 'Work'
+    const TABLE = 'customer_uploads'
+    const PAGE_SIZE = 50
+    // ==================
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    const $ = id => document.getElementById(id)
+
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+    const fmt = iso => new Date(iso).toLocaleString('zh-TW', { hour12: false })
+
+    let rows = []              // 目前已載入的資料
+    let selected = new Set()   // 勾選中的 id
+    let total = 0              // 符合條件的總筆數
+    let currentCode = ''       // 目前套用的查詢條件
+    let currentFrom = null     // 日期區間起（ISO，含）
+    let currentTo = null       // 日期區間迄（ISO，不含）
+    let currentLabel = '全部'  // 顯示用條件說明
+    const BATCH = 100          // 整批刪除時每批處理筆數
+
+    function show(text, type = '') {
+      $('msg').textContent = text
+      $('msg').className = type
+    }
+
+    // file_path 可能是相對路徑，也可能是完整公開網址，統一轉成 bucket 內路徑
+    function pathOf(fp) {
+      if (/^https?:\/\//i.test(fp)) {
+        const marker = `/object/public/${BUCKET}/`
+        const i = fp.indexOf(marker)
+        return i >= 0 ? decodeURIComponent(fp.slice(i + marker.length).split('?')[0]) : fp
+      }
+      return fp
+    }
+    const urlOf = fp => /^https?:\/\//i.test(fp)
+      ? fp
+      : supabase.storage.from(BUCKET).getPublicUrl(fp).data.publicUrl
+
+    // ===== 登入 =====
+    function setView(session) {
+      const loggedIn = !!session
+      $('loginView').hidden = loggedIn
+      $('appView').hidden = !loggedIn
+      if (loggedIn) {
+        $('who').textContent = session.user.email
+        search()
+      } else {
+        rows = []; selected.clear(); render()
+      }
+    }
+
+    supabase.auth.onAuthStateChange((_e, session) => setView(session))
+    supabase.auth.getSession().then(({ data }) => setView(data.session))
+
+    async function login() {
+      const email = $('email').value.trim()
+      const password = $('password').value
+      if (!email || !password) { $('loginMsg').textContent = '請輸入 Email 與密碼'; return }
+      $('loginBtn').disabled = true
+      $('loginMsg').textContent = ''
+      const { error } = await supabase.auth.signInWithPassword({ email, password })
+      $('loginBtn').disabled = false
+      if (error) $('loginMsg').textContent = '登入失敗：' + error.message
+      else $('password').value = ''
+    }
+    $('loginBtn').addEventListener('click', login)
+    $('password').addEventListener('keydown', e => { if (e.key === 'Enter') login() })
+    $('logoutBtn').addEventListener('click', () => supabase.auth.signOut())
+
+    // ===== 查詢 / 載入更多 =====
+    // 套用目前已生效的查詢條件（客戶代碼 + 日期區間）
+    function applyFilters(q) {
+      if (currentCode) q = q.ilike('customer_code', `%${currentCode.replace(/[%_\\]/g, '\\$&')}%`)
+      if (currentFrom) q = q.gte('uploaded_at', currentFrom)
+      if (currentTo) q = q.lt('uploaded_at', currentTo)
+      return q
+    }
+
+    async function fetchPage(offset) {
+      return applyFilters(
+        supabase
+          .from(TABLE)
+          .select('id, customer_code, file_path, uploaded_at', { count: 'exact' })
+      )
+        .order('uploaded_at', { ascending: false })
+        .range(offset, offset + PAGE_SIZE - 1)
+    }
+
+    async function search() {
+      const f = $('dateFrom').value
+      const t = $('dateTo').value
+      if (f && t && f > t) return show('起始日期不可晚於結束日期', 'err')
+
+      currentCode = $('searchCode').value.trim()
+      // 以本機時區（台灣）的 00:00 為日界線
+      currentFrom = f ? new Date(f + 'T00:00:00').toISOString() : null
+      if (t) {
+        const d = new Date(t + 'T00:00:00')
+        d.setDate(d.getDate() + 1)
+        currentTo = d.toISOString()
+      } else {
+        currentTo = null
+      }
+      const parts = []
+      if (currentCode) parts.push(`客戶代碼含「${currentCode}」`)
+      if (f || t) parts.push(`日期 ${f || '不限'} ～ ${t || '不限'}`)
+      currentLabel = parts.length ? parts.join('，') : '全部'
+      $('filterLabel').textContent = '目前條件：' + currentLabel
+
+      selected.clear()
+      show('載入中…')
+      const { data, error, count } = await fetchPage(0)
+      if (error) { rows = []; total = 0; render(); return show('載入失敗：' + error.message, 'err') }
+      rows = data; total = count ?? data.length
+      show('')
+      render()
+    }
+
+    $('more').addEventListener('click', async () => {
+      $('more').disabled = true
+      const { data, error } = await fetchPage(rows.length)
+      $('more').disabled = false
+      if (error) return show('載入失敗：' + error.message, 'err')
+      rows = rows.concat(data)
+      render()
+    })
+
+    $('searchBtn').addEventListener('click', search)
+    $('searchCode').addEventListener('keydown', e => { if (e.key === 'Enter') search() })
+
+    // ===== 畫面 =====
+    function render() {
+      if (!rows.length) {
+        $('tbody').innerHTML = '<tr><td colspan="6" class="empty">沒有資料</td></tr>'
+      } else {
+        $('tbody').innerHTML = rows.map(r => `
+          <tr data-id="${esc(r.id)}" class="${selected.has(r.id) ? 'selected' : ''}">
+            <td class="chk"><input type="checkbox" class="rowchk" ${selected.has(r.id) ? 'checked' : ''}></td>
+            <td><img class="thumb" src="${esc(urlOf(r.file_path))}" loading="lazy" alt="" data-full="${esc(urlOf(r.file_path))}"></td>
+            <td>${esc(r.customer_code)}</td>
+            <td class="date">${esc(fmt(r.uploaded_at))}</td>
+            <td class="path">${esc(pathOf(r.file_path))}</td>
+            <td class="act"><button class="small light" data-act="del">刪除</button></td>
+          </tr>`).join('')
+      }
+      $('more').hidden = rows.length >= total
+      updateToolbar()
+    }
+
+    function updateToolbar() {
+      const n = selected.size
+      $('count').textContent = `已列出 ${rows.length} / ${total} 筆，已勾選 ${n} 筆`
+      $('delSelectedBtn').disabled = n === 0
+      // 整批刪除：必須設定日期區間，且有符合的資料
+      $('delAllBtn').disabled = !((currentFrom || currentTo) && total > 0)
+      const all = $('checkAll')
+      all.checked = rows.length > 0 && n === rows.length
+      all.indeterminate = n > 0 && n < rows.length
+    }
+
+    $('checkAll').addEventListener('change', e => {
+      selected = e.target.checked ? new Set(rows.map(r => r.id)) : new Set()
+      render()
+    })
+
+    $('tbody').addEventListener('change', e => {
+      if (!e.target.classList.contains('rowchk')) return
+      const tr = e.target.closest('tr')
+      const id = tr.dataset.id
+      e.target.checked ? selected.add(id) : selected.delete(id)
+      tr.classList.toggle('selected', e.target.checked)
+      updateToolbar()
+    })
+
+    // 預覽放大
+    $('tbody').addEventListener('click', e => {
+      const img = e.target.closest('.thumb')
+      if (img) {
+        $('lightbox').querySelector('img').src = img.dataset.full
+        $('lightbox').classList.add('show')
+        return
+      }
+      const btn = e.target.closest('button[data-act="del"]')
+      if (btn) {
+        const id = btn.closest('tr').dataset.id
+        const r = rows.find(x => x.id === id)
+        if (r && confirm(`確定刪除這筆資料與圖片？\n\n客戶代碼：${r.customer_code}\n此動作無法復原。`)) deleteRows([r])
+      }
+    })
+    $('lightbox').addEventListener('click', () => $('lightbox').classList.remove('show'))
+
+    $('delSelectedBtn').addEventListener('click', () => {
+      const targets = rows.filter(r => selected.has(r.id))
+      if (!targets.length) return
+      if (confirm(`確定刪除勾選的 ${targets.length} 筆資料與圖片？\n此動作無法復原。`)) deleteRows(targets)
+    })
+
+    // ===== 刪除：先刪 Storage 圖片，再刪資料表紀錄 =====
+    async function deleteRows(targets) {
+      $('delSelectedBtn').disabled = true
+      show(`刪除中（${targets.length} 筆）…`)
+      try {
+        const paths = [...new Set(targets.map(r => pathOf(r.file_path)))]
+        const { error: sErr } = await supabase.storage.from(BUCKET).remove(paths)
+        if (sErr) throw new Error('刪除圖片失敗：' + sErr.message)
+
+        const ids = targets.map(r => r.id)
+        const { data, error: dErr } = await supabase.from(TABLE).delete().in('id', ids).select('id')
+        if (dErr) throw new Error('刪除紀錄失敗：' + dErr.message)
+
+        const deleted = new Set((data || []).map(d => d.id))
+        rows = rows.filter(r => !deleted.has(r.id))
+        deleted.forEach(id => selected.delete(id))
+        total = Math.max(0, total - deleted.size)
+        render()
+
+        if (deleted.size < ids.length) {
+          show(`已刪除 ${deleted.size} 筆，其餘 ${ids.length - deleted.size} 筆沒有刪除（可能沒有權限）`, 'err')
+        } else {
+          show(`已刪除 ${deleted.size} 筆`, 'ok')
+        }
+      } catch (e) {
+        show(e.message, 'err')
+        updateToolbar()
+      }
+    }
+    // ===== 清除條件 =====
+    $('clearBtn').addEventListener('click', () => {
+      $('searchCode').value = ''
+      $('dateFrom').value = ''
+      $('dateTo').value = ''
+      search()
+    })
+
+    // ===== 依目前條件整批刪除（分批處理，不受已載入筆數限制）=====
+    $('delAllBtn').addEventListener('click', async () => {
+      if (!currentFrom && !currentTo) return show('請先設定日期區間並按「查詢」', 'err')
+
+      // 重新計算符合條件的總筆數，避免畫面資料已過期
+      const { count, error: cErr } = await applyFilters(
+        supabase.from(TABLE).select('id', { count: 'exact', head: true })
+      )
+      if (cErr) return show('查詢筆數失敗：' + cErr.message, 'err')
+      if (!count) return show('沒有符合條件的資料', 'err')
+
+      const answer = prompt(
+        `即將刪除符合下列條件的「全部」資料與圖片：\n\n` +
+        `${currentLabel}\n共 ${count} 筆\n\n` +
+        `此動作無法復原。若確定要刪除，請輸入「刪除」二字：`
+      )
+      if (answer !== '刪除') return show('已取消', '')
+
+      $('delAllBtn').disabled = true
+      $('delSelectedBtn').disabled = true
+      let done = 0
+      let missingFiles = 0
+      let result = { text: '', type: '' }
+      try {
+        while (true) {
+          const { data: batch, error: qErr } = await applyFilters(
+            supabase.from(TABLE).select('id, file_path')
+          )
+            .order('uploaded_at', { ascending: true })
+            .limit(BATCH)
+          if (qErr) throw new Error('讀取資料失敗：' + qErr.message)
+          if (!batch.length) break
+
+          // 1) 先刪圖片
+          const paths = [...new Set(batch.map(r => pathOf(r.file_path)))]
+          const { data: removed, error: sErr } = await supabase.storage.from(BUCKET).remove(paths)
+          if (sErr) throw new Error('刪除圖片失敗：' + sErr.message)
+          missingFiles += Math.max(0, paths.length - (removed?.length ?? 0))
+
+          // 2) 再刪紀錄
+          const { data: del, error: dErr } = await supabase
+            .from(TABLE).delete().in('id', batch.map(r => r.id)).select('id')
+          if (dErr) throw new Error('刪除紀錄失敗：' + dErr.message)
+          if (!del.length) throw new Error('沒有刪除任何紀錄，可能沒有權限，已停止')
+
+          done += del.length
+          show(`刪除中… ${done} / ${count}`)
+        }
+        result = {
+          text: `已刪除 ${done} 筆` + (missingFiles ? `（其中 ${missingFiles} 張圖片在 Storage 中找不到或未刪除）` : ''),
+          type: 'ok'
+        }
+      } catch (e) {
+        result = { text: `${e.message}（已刪除 ${done} 筆）`, type: 'err' }
+      }
+      await search()           // 重新載入列表（會清掉訊息）
+      show(result.text, result.type)
+    })
+  </script>
+</body>
+</html>
